@@ -40,6 +40,7 @@
 #include "l2c_int.h"
 #include "l2cdefs.h"
 #include "osi/include/log.h"
+#include "btif_util.h"
 
 
 extern fixed_queue_t *btu_general_alarm_queue;
@@ -75,6 +76,7 @@ void l2c_rcv_acl_data (BT_HDR *p_msg)
     tL2C_CCB    *p_ccb = NULL;
     UINT16      l2cap_len, rcv_cid, psm;
     UINT16      credit;
+    UINT16      soc_log_stats_id;
 
     /* Extract the handle */
     STREAM_TO_UINT16 (handle, p);
@@ -114,10 +116,16 @@ void l2c_rcv_acl_data (BT_HDR *p_msg)
                 }
 
                 return;
+
             } else if (handle != 0xedc) {    /* Handle 0xedc used for SOC Logging */
                 L2CAP_TRACE_ERROR ("L2CAP - rcvd ACL for unknown handle:%d ls:%d cid:%d"
                         " opcode:%d cur count:%d", handle, p_msg->layer_specific, rcv_cid,
                         cmd_code, list_length(l2cb.rcv_pending_q));
+            } else if (handle == 0xedc) {    /* Handle 0x2edc used for SOC debug Logging */
+                p += 1;              /* move offset to extract soc log id type */
+                STREAM_TO_UINT16 (soc_log_stats_id, p);
+                if ( soc_log_stats_id == (LOG_ID_STATS_A2DP))
+                    btm_process_soc_logging_evt(soc_log_stats_id);
             }
             osi_free(p_msg);
             return;

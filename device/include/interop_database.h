@@ -105,6 +105,8 @@ static const interop_addr_entry_t interop_addr_database[] = {
   {{{0x28, 0x18, 0x78,       0,0,0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
   // Tero's Game Controller
   {{{0x60, 0x45, 0xBD,       0,0,0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
+  // MEIYI HID Device
+  {{{0x58, 0x71, 0x33,       0,0,0}}, 3, INTEROP_DISABLE_SDP_AFTER_PAIRING},
 
   // Targus BT Laser Notebook Mouse
   {{{0x00, 0x12, 0xA1,       0,0,0}}, 3, INTEROP_DISABLE_AUTH_FOR_HID_POINTING},
@@ -140,6 +142,7 @@ static const interop_addr_entry_t interop_addr_database[] = {
 
   //Bose Mini II sound link
   {{{0x04, 0x52, 0xc7,      0,0,0}}, 3, INTEROP_DELAY_SCO_FOR_MT_CALL},
+
 };
 
 typedef struct {
@@ -182,6 +185,7 @@ static const interop_name_entry_t interop_name_database[] = {
 
   //JABRA EASYGO
   {"JABRA EASYGO", 12, INTEROP_DISABLE_CODEC_NEGOTIATION},
+
 };
 
 typedef struct {

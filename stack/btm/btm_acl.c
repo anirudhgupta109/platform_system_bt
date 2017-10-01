@@ -1609,6 +1609,63 @@ void btm_process_clk_off_comp_evt (UINT16 hci_handle, UINT16 clock_offset)
 
 /*******************************************************************************
 **
+** Function         btm_process_pkt_type_change_evt
+**
+** Description      This function is called when packet type change event received.
+**
+** Input Parms      hci_handle - connection handle associated with the change
+**                  packet type
+**
+** Returns          void
+**
+*******************************************************************************/
+void btm_process_pkt_type_change_evt (UINT16 hci_handle, UINT16 pkt_type)
+{
+    UINT8            acl_idx;
+    tBTM_BL_PKT_TYPE_CHG_DATA   evt;
+
+    BTM_TRACE_DEBUG ("btm_process_pkt_type_change_evt");
+    if ((acl_idx = btm_handle_to_acl_index(hci_handle)) >= MAX_L2CAP_LINKS)
+    {
+         BTM_TRACE_ERROR("btm_process_pkt_type_change_evt handle=%d invalid", hci_handle);
+         return;
+    }
+    if (btm_cb.p_bl_changed_cb)
+    {
+        evt.event = BTM_BL_PKT_TYPE_CHG_EVT;
+        memcpy(evt.remote_bd_addr, btm_cb.acl_db[acl_idx].remote_addr, BD_ADDR_LEN);
+        evt.pkt_type = pkt_type;
+        (*btm_cb.p_bl_changed_cb)((tBTM_BL_EVENT_DATA *)&evt);
+    }
+}
+
+/*******************************************************************************
+**
+** Function         btm_process_soc_logging_evt
+**
+** Description      This function is called when soc logging request received
+**                  from controller.
+**
+** Input Parms      SOC logging ID
+**
+** Returns          void
+**
+*******************************************************************************/
+void btm_process_soc_logging_evt (UINT16 soc_log_id)
+{
+    tBTM_BL_SOC_LOGGING_DATA   evt;
+
+    BTM_TRACE_DEBUG ("btm_process_soc_logging_evt");
+    if (btm_cb.p_bl_changed_cb)
+    {
+        evt.event = BTM_BL_SOC_LOGGING_EVT;
+        evt.soc_log_id = soc_log_id;
+        (*btm_cb.p_bl_changed_cb)((tBTM_BL_EVENT_DATA *)&evt);
+    }
+}
+
+/*******************************************************************************
+**
 ** Function         btm_blacklist_role_change_device
 **
 ** Description      This function is used to blacklist the device if the role

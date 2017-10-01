@@ -337,6 +337,8 @@ typedef struct
     UINT8           new_role;
     BD_ADDR         bd_addr;
     UINT8           hci_status;
+    UINT16          pkt_type;
+    UINT16          soc_log_id;
 #if BLE_INCLUDED == TRUE
     UINT16          handle;
     tBT_TRANSPORT   transport;

@@ -38,7 +38,6 @@
 #include "bt_common.h"
 #include "osi/include/allocator.h"
 #include <cutils/properties.h>
-
 /*****************************************************************************
 **  Constants & Macros
 ******************************************************************************/
@@ -176,7 +175,7 @@ static BOOLEAN btif_av_state_started_handler(btif_sm_event_t event, void *data,i
 static BOOLEAN btif_av_state_closing_handler(btif_sm_event_t event, void *data,int index);
 
 static BOOLEAN btif_av_get_valid_idx(int idx);
-static UINT8 btif_av_idx_by_bdaddr( BD_ADDR bd_addr);
+UINT8 btif_av_idx_by_bdaddr( BD_ADDR bd_addr);
 int btif_get_latest_playing_device_idx();
 static int btif_get_latest_device_idx_to_start();
 static int btif_av_get_valid_idx_for_rc_events(BD_ADDR bd_addr, int rc_handle);
@@ -212,6 +211,7 @@ extern void btif_rc_send_pause_command();
 extern UINT16 btif_dm_get_br_edr_links();
 extern UINT16 btif_dm_get_le_links();
 extern UINT16 btif_hf_is_call_idle();
+extern void btif_media_on_update_bitrate(bool isMediumBitRateEnabled);
 
 extern fixed_queue_t *btu_general_alarm_queue;
 
@@ -231,11 +231,9 @@ tBTA_AV_HNDL btif_av_get_av_hdl_from_idx(UINT8 idx);
 int btif_av_get_other_connected_idx(int current_index);
 #ifdef BTA_AV_SPLIT_A2DP_ENABLED
 BOOLEAN btif_av_is_codec_offload_supported(int codec);
-int btif_av_get_current_playing_dev_idx();
 BOOLEAN btif_av_is_under_handoff();
 #else
 #define btif_av_is_codec_offload_supported(codec) (0)
-#define btif_av_get_current_playing_dev_idx() (0)
 #define btif_av_is_under_handoff() (0)
 #endif
 
@@ -412,7 +410,6 @@ static void btif_report_audio_state(btav_audio_state_t state, bt_bdaddr_t *bd_ad
         HAL_CBACK(bt_av_src_callbacks, audio_state_cb, state, bd_addr);
     }
 }
-
 /*****************************************************************************
 **
 ** Function     btif_av_state_idle_handler
@@ -425,6 +422,7 @@ static void btif_report_audio_state(btav_audio_state_t state, bt_bdaddr_t *bd_ad
 
 static BOOLEAN btif_av_state_idle_handler(btif_sm_event_t event, void *p_data, int index)
 {
+    int i;
     char a2dp_role[255] = "false";
 
     BTIF_TRACE_IMP("%s event:%s flags %x on Index = %d", __FUNCTION__,
@@ -647,22 +645,40 @@ static BOOLEAN btif_av_state_idle_handler(btif_sm_event_t event, void *p_data, i
                  * and update multicast state
                  */
                 btif_av_update_multicast_state(index);
+
+                btif_av_cb[index].current_playing = TRUE;
+                if (enable_multicast == FALSE)
+                {
+                    for (i = 0; i < btif_max_av_clients; i++)
+                    {
+                        if (i != index)
+                        {
+                            btif_av_cb[i].current_playing = FALSE;
+                        }
+                    }
+                    if (btif_av_is_playing())
+                    {
+                        BTIF_TRACE_DEBUG("Trigger Dual A2dp Handoff on %d", index);
+                        btif_av_trigger_dual_handoff(TRUE, btif_av_cb[index].peer_bda.address);
+                    }
+                }
+
+                if (btif_av_cb[index].peer_sep == AVDT_TSEP_SNK)
+                {
+                    /* if queued PLAY command,  send it now */
+                    btif_rc_check_handle_pending_play(p_bta_data->open.bd_addr,
+                                (p_bta_data->open.status == BTA_AV_SUCCESS));
+                }
+                else if ((btif_av_cb[index].peer_sep == AVDT_TSEP_SRC) &&
+                            (p_bta_data->open.status == BTA_AV_SUCCESS))
+                {
+                    /* if queued PLAY command,  send it now */
+                    btif_rc_check_handle_pending_play(p_bta_data->open.bd_addr, FALSE);
+                    /* Bring up AVRCP connection too */
+                    BTA_AvOpenRc(btif_av_cb[index].bta_handle);
+                }
             }
 
-            if (btif_av_cb[index].peer_sep == AVDT_TSEP_SNK)
-            {
-                /* if queued PLAY command,  send it now */
-                btif_rc_check_handle_pending_play(p_bta_data->open.bd_addr,
-                                             (p_bta_data->open.status == BTA_AV_SUCCESS));
-            }
-            else if ((btif_av_cb[index].peer_sep == AVDT_TSEP_SRC) &&
-                    (p_bta_data->open.status == BTA_AV_SUCCESS))
-            {
-                /* if queued PLAY command,  send it now */
-                btif_rc_check_handle_pending_play(p_bta_data->open.bd_addr, FALSE);
-                /* Bring up AVRCP connection too */
-                BTA_AvOpenRc(btif_av_cb[index].bta_handle);
-            }
             btif_queue_advance();
         } break;
 
@@ -1048,6 +1064,19 @@ static BOOLEAN btif_av_state_closing_handler(btif_sm_event_t event, void *p_data
    return TRUE;
 }
 
+/******************************************************************************
+**
+** Function        btif_av_is_offload_supported
+**
+** Description     Returns split mode status
+**
+** Returns         TRUE if split mode is enabled, FALSE otherwise
+********************************************************************************/
+BOOLEAN btif_av_is_offload_supported()
+{
+    return bt_split_a2dp_enabled;
+}
+
 /*****************************************************************************
 **
 ** Function     btif_av_state_opened_handler
@@ -1211,12 +1240,19 @@ static BOOLEAN btif_av_state_opened_handler(btif_sm_event_t event, void *p_data,
                             BTIF_TRACE_DEBUG("%s: clear remote suspend flag on remote start",
                                 __FUNCTION__);
                             btif_av_cb[index].flags &= ~BTIF_AV_FLAG_REMOTE_SUSPEND;
+                            if (btif_av_is_offload_supported())
+                            {
+                               btif_media_start_vendor_command();
+                            }
+                            else
+                            {
+                                btif_a2dp_on_remote_started();
+                            }
                         }
                         else
                         {
-                            BTIF_TRACE_DEBUG("%s: trigger suspend as remote initiated!!",
-                                __FUNCTION__);
-                            btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
+                            BTIF_TRACE_DEBUG("%s: honor remote started for BL device",__FUNCTION__);
+                            btif_a2dp_on_remote_started();
                         }
                     }
                 }
@@ -1968,7 +2004,7 @@ static BOOLEAN btif_av_get_valid_idx(int idx)
 **
 *******************************************************************************/
 
-static UINT8 btif_av_idx_by_bdaddr(BD_ADDR bd_addr)
+UINT8 btif_av_idx_by_bdaddr(BD_ADDR bd_addr)
 {
     int i;
     for (i = 0; i < btif_max_av_clients; i++)
@@ -3538,6 +3574,29 @@ BOOLEAN btif_av_get_ongoing_multicast()
     }
 }
 
+void btif_av_peer_config_dump()
+{
+   int index = 0;
+   BD_ADDR bd_addr;
+   btif_sm_state_t av_state;
+   btif_get_latest_playing_device(bd_addr);
+   BTIF_TRACE_IMP("TARGET BD ADDRESS %x:%x:%x:%x:%x:%x", bd_addr[0],
+         bd_addr[1], bd_addr[2], bd_addr[3], bd_addr[4], bd_addr[5]);
+   index = btif_av_idx_by_bdaddr(bd_addr);
+   if (index == btif_max_av_clients)
+   {
+       BTIF_TRACE_DEBUG("%s: AV Index invalid", __FUNCTION__);
+       return;
+   }
+   av_state = btif_get_conn_state_of_device(bd_addr);
+   BTIF_TRACE_IMP("%s: Av_state: %d", __FUNCTION__, av_state);
+   BTIF_TRACE_IMP("%s: index: %d flags: 0x%x edr: 0x%x SHO: %d current_playing: %d",
+                    __FUNCTION__, index, btif_av_cb[index].flags, btif_av_cb[index].edr,
+                     btif_av_cb[index].dual_handoff, btif_av_cb[index].current_playing);
+   BTIF_TRACE_IMP("%s: is_slave: %d is_device_palaying: %d",
+         __FUNCTION__, btif_av_cb[index].is_slave, btif_av_cb[index].is_device_playing);
+   btif_media_dump_codec_info(btif_av_cb[index].bta_handle);
+}
 /******************************************************************************
 **
 ** Function        btif_av_is_multicast_supported
@@ -3551,17 +3610,19 @@ BOOLEAN btif_av_is_multicast_supported()
     return is_multicast_supported;
 }
 
-/******************************************************************************
-**
-** Function        btif_av_is_offload_supported
-**
-** Description     Returns split mode status
-**
-** Returns         TRUE if split mode is enabled, FALSE otherwise
-********************************************************************************/
-BOOLEAN btif_av_is_offload_supported()
+BOOLEAN btif_av_check_flag_remote_suspend(int index)
 {
-    return bt_split_a2dp_enabled;
+    BTIF_TRACE_ERROR("%s: index = %d",__FUNCTION__,index);
+    if (btif_av_cb[index].flags & BTIF_AV_FLAG_REMOTE_SUSPEND)
+    {
+        BTIF_TRACE_DEBUG("remote suspend flag set on index = %d",index);
+        return TRUE;
+    }
+    else
+    {
+        BTIF_TRACE_DEBUG("remote suspend flag not set on index = %d",index);
+        return FALSE;
+    }
 }
 
 #ifdef BTA_AV_SPLIT_A2DP_ENABLED
@@ -3732,5 +3793,49 @@ BOOLEAN btif_av_is_under_handoff()
     }
     return FALSE;
 }
+
 #endif
+
+void btif_av_update_streaming_bitrate(BD_ADDR bd_addr,
+                                    UINT16 acl_pkt_types_supported)
+{
+    UINT8 index;
+    btif_sm_state_t state;
+    index = btif_av_idx_by_bdaddr(bd_addr);
+    if (index == btif_max_av_clients)
+    {
+        BTIF_TRACE_WARNING("%s: Wrong BD address passed, index: %d, bail out!",
+            __func__, index);
+        return;
+    }
+    state = btif_sm_get_state(btif_av_cb[index].sm_handle);
+    if (state != BTIF_AV_STATE_STARTED)
+    {
+        BTIF_TRACE_WARNING("%s: device not started: state: %d, bail out!",
+            __func__, state);
+        return;
+    }
+    BTIF_TRACE_IMP("%s Bitrate updated: mask: %u, index: %d, state: %d",
+        __func__, acl_pkt_types_supported, index, state);
+    if (!btif_av_cb[index].edr)
+    {
+        BTIF_TRACE_WARNING("%s: device not edr, bail out!", __func__);
+        return;
+    }
+    BTIF_TRACE_IMP("%s: device supports 3mbps? %d", __func__,
+                                        btif_av_cb[index].edr_3mbps);
+    if (((!btif_av_cb[index].edr_3mbps) && (acl_pkt_types_supported &
+        HCI_PKT_TYPES_MASK_NO_2_DH5)) ||
+        ((btif_av_cb[index].edr_3mbps) && (acl_pkt_types_supported &
+        HCI_PKT_TYPES_MASK_NO_3_DH5)))
+    {
+        BTIF_TRACE_IMP("%s: fallback to medium bitrate", __func__);
+        btif_media_on_update_bitrate(true);
+    }
+    else
+    {
+        BTIF_TRACE_IMP("%s: fallback to high bitrate", __func__);
+        btif_media_on_update_bitrate(false);
+    }
+}
 

@@ -61,6 +61,7 @@ typedef enum {
     BT_SOC_RESERVED
 } bt_soc_type;
 
+#define LOG_ID_STATS_A2DP             (0x06 << 8) | 0x00
 #define MAX_NAME_LEN                  (50)
 #define IOT_DEV_BASE_CONF_FILE        "/etc/bluetooth/iot_devlist.conf"
 #define IOT_DEV_CONF_FILE             "/data/misc/bluedroid/iot_devlist.conf"

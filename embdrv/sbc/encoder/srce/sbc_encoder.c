@@ -26,6 +26,7 @@
 #include "bt_target.h"
 #include "sbc_encoder.h"
 #include "sbc_enc_func_declare.h"
+#include "osi/include/mutex.h"
 
 SINT16 EncMaxShiftCounter;
 
@@ -51,7 +52,10 @@ void SBC_Encoder(SBC_ENC_PARAMS *pstrEncParams)
     SINT32 *pSum, *pDiff;
 #endif
     UINT8  *pu8;
-    register SINT32  s32NumOfSubBands = pstrEncParams->s16NumOfSubBands;
+    register SINT32  s32NumOfSubBands;
+
+    mutex_global_lock();
+    s32NumOfSubBands = pstrEncParams->s16NumOfSubBands;
 
     pstrEncParams->pu8NextPacket = pstrEncParams->pu8Packet;
 
@@ -192,6 +196,7 @@ void SBC_Encoder(SBC_ENC_PARAMS *pstrEncParams)
 
     pstrEncParams->u8NumPacketToEncode = 1; /* default is one for retrocompatibility purpose */
 
+    mutex_global_unlock();
 }
 
 /****************************************************************************
@@ -206,6 +211,8 @@ void SBC_Encoder_Init(SBC_ENC_PARAMS *pstrEncParams)
     SINT16 s16BitRate;      /*to store bitrate*/
     SINT16 s16FrameLen;     /*to store frame length*/
     UINT16 HeaderParams;
+
+    mutex_global_lock();
 
     pstrEncParams->u8NumPacketToEncode = 1; /* default is one for retrocompatibility purpose */
 
@@ -303,4 +310,5 @@ void SBC_Encoder_Init(SBC_ENC_PARAMS *pstrEncParams)
             pstrEncParams->u16BitRate, pstrEncParams->s16BitPool);
 
     SbcAnalysisInit();
+    mutex_global_unlock();
 }

@@ -85,7 +85,7 @@ static void btu_hcif_loopback_command_evt (void);
 static void btu_hcif_data_buf_overflow_evt (void);
 static void btu_hcif_max_slots_changed_evt (void);
 static void btu_hcif_read_clock_off_comp_evt (UINT8 *p);
-static void btu_hcif_conn_pkt_type_change_evt (void);
+static void btu_hcif_conn_pkt_type_change_evt (UINT8 *p);
 static void btu_hcif_qos_violation_evt (UINT8 *p);
 static void btu_hcif_page_scan_mode_change_evt (void);
 static void btu_hcif_page_scan_rep_mode_chng_evt (void);
@@ -242,7 +242,7 @@ void btu_hcif_process_event (UNUSED_ATTR UINT8 controller_id, BT_HDR *p_msg)
             btu_hcif_read_clock_off_comp_evt (p);
             break;
         case HCI_CONN_PKT_TYPE_CHANGE_EVT:
-            btu_hcif_conn_pkt_type_change_evt ();
+            btu_hcif_conn_pkt_type_change_evt (p);
             break;
         case HCI_QOS_VIOLATION_EVT:
             btu_hcif_qos_violation_evt (p);
@@ -1414,8 +1414,23 @@ static void btu_hcif_read_clock_off_comp_evt (UINT8 *p)
 ** Returns          void
 **
 *******************************************************************************/
-static void btu_hcif_conn_pkt_type_change_evt (void)
+static void btu_hcif_conn_pkt_type_change_evt (UINT8 *p)
 {
+    UINT8       status;
+    UINT16      handle;
+    UINT16      pkt_type;
+
+    STREAM_TO_UINT8  (status, p);
+
+    if (status != HCI_SUCCESS)
+        return;
+
+    STREAM_TO_UINT16 (handle, p);
+    STREAM_TO_UINT16 (pkt_type, p);
+
+    handle = HCID_GET_HANDLE (handle);
+
+    btm_process_pkt_type_change_evt (handle, pkt_type);
 }
 
 /*******************************************************************************

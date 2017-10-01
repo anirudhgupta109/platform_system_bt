@@ -798,6 +798,8 @@ enum
     BTM_BL_DISCN_EVT,
     BTM_BL_UPDATE_EVT,
     BTM_BL_ROLE_CHG_EVT,
+    BTM_BL_PKT_TYPE_CHG_EVT,
+    BTM_BL_SOC_LOGGING_EVT,
     BTM_BL_COLLISION_EVT
 };
 typedef UINT8 tBTM_BL_EVENT;
@@ -864,6 +866,21 @@ typedef struct
     UINT8           hci_status; /* HCI status returned with the event */
 } tBTM_BL_ROLE_CHG_DATA;
 
+/* the data type associated with BTM_BL_PKT_TYPE_CHG_EVT */
+typedef struct
+{
+    tBTM_BL_EVENT   event;      /* The event reported. */
+    BD_ADDR         remote_bd_addr;     /* Remote addr */
+    UINT16          pkt_type;   /* packet type */
+} tBTM_BL_PKT_TYPE_CHG_DATA;
+
+/* the data type associated with BTM_BL_SOC_LOGGING_EVT */
+typedef struct
+{
+    tBTM_BL_EVENT   event;      /* The event reported. */
+    UINT16          soc_log_id;   /* soc log id type */
+} tBTM_BL_SOC_LOGGING_DATA;
+
 typedef union
 {
     tBTM_BL_EVENT           event;  /* The event reported. */
@@ -871,6 +888,8 @@ typedef union
     tBTM_BL_DISCN_DATA      discn;  /* The data associated with BTM_BL_DISCN_EVT */
     tBTM_BL_UPDATE_DATA     update; /* The data associated with BTM_BL_UPDATE_EVT */
     tBTM_BL_ROLE_CHG_DATA   role_chg;/*The data associated with BTM_BL_ROLE_CHG_EVT */
+    tBTM_BL_PKT_TYPE_CHG_DATA   pkt_type_chg;/*The data associated with BTM_BL_PKT_TYPE_CHG_EVT */
+    tBTM_BL_SOC_LOGGING_DATA    soc_logging;/*The data associated with BTM_BL_SOC_LOGGING_EVT */
 } tBTM_BL_EVENT_DATA;
 
 /* Callback function for notifications when the BTM busy level

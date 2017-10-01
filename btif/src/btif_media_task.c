@@ -177,7 +177,7 @@ enum {
 #define BTIF_MEDIA_TIME_TICK                     (20 * BTIF_MEDIA_NUM_TICK)
 #define A2DP_DATA_READ_POLL_MS    (BTIF_MEDIA_TIME_TICK / 2)
 #define BTIF_SINK_MEDIA_TIME_TICK_MS             (20 * BTIF_MEDIA_NUM_TICK)
-
+#define BTIF_REMOTE_START_TOUT 3000
 
 /* buffer pool */
 #define BTIF_MEDIA_AA_BUF_SIZE  BT_DEFAULT_BUFFER_SIZE
@@ -401,6 +401,7 @@ typedef struct
 #endif
     alarm_t *media_alarm;
     alarm_t *decode_alarm;
+    alarm_t *remote_start_alarm;
     btif_media_stats_t stats;
     btif_media_stats_t accumulated_stats;
 //#ifdef BTA_AV_SPLIT_A2DP_ENABLED
@@ -413,6 +414,7 @@ typedef struct
     BOOLEAN tx_enc_update_initiated;
 //#endif
 
+    BOOLEAN is_medium_bitrate_enabled;
 #endif
 } tBTIF_MEDIA_CB;
 
@@ -490,13 +492,11 @@ extern tBTA_AV_HNDL btif_av_get_av_hdl_from_idx(UINT8 idx);
 extern BOOLEAN btif_av_is_under_handoff();
 void btif_media_send_reset_vendor_state();
 void btif_media_on_start_vendor_command();
-void btif_media_start_vendor_command();
 void btif_media_on_stop_vendor_command();
 BOOLEAN btif_media_send_vendor_pref_bit_rate();
 BOOLEAN btif_media_send_vendor_write_sbc_cfg();
 BOOLEAN btif_media_send_vendor_media_chn_cfg();
 BOOLEAN btif_media_send_vendor_stop();
-BOOLEAN btif_media_send_vendor_start();
 void disconnect_a2dp_on_vendor_start_failure();
 BOOLEAN btif_media_send_vendor_selected_codec();
 BOOLEAN btif_media_send_vendor_transport_cfg();
@@ -506,20 +506,17 @@ BOOLEAN btif_media_send_vendor_scmst_hdr();
 #define btif_av_is_under_handoff() (0)
 #define btif_media_send_reset_vendor_state() (0)
 #define btif_media_on_start_vendor_command() (0)
-#define btif_media_start_vendor_command()    (0)
 #define btif_media_on_stop_vendor_command()  (0)
 #define btif_media_send_vendor_pref_bit_rate() (0)
 #define btif_media_send_vendor_write_sbc_cfg() (0)
 #define btif_media_send_vendor_media_chn_cfg() (0)
 #define btif_media_send_vendor_stop()        (0)
-#define btif_media_send_vendor_start()       (0)
 #define disconnect_a2dp_on_vendor_start_failure() (0)
 #define btif_media_send_vendor_selected_codec() (0)
 #define btif_media_send_vendor_transport_cfg()  (0)
 #define btif_media_send_vendor_scmst_hdr()      (0)
-
 #endif
-
+void btif_a2dp_remote_start_timer();
 
 static tBTIF_MEDIA_CB btif_media_cb;
 static int media_task_running = MEDIA_TASK_STATE_OFF;
@@ -845,6 +842,13 @@ static void btif_recv_ctrl_data(void)
                 break;
             }
 
+            if (alarm_is_scheduled(btif_media_cb.remote_start_alarm))
+            {
+                APPL_TRACE_WARNING("%s: remote a2dp started, cancle remote start timer",
+                                   __func__);
+                alarm_free(btif_media_cb.remote_start_alarm);
+                btif_media_cb.remote_start_alarm = NULL;
+            }
             /* In Dual A2dp, first check for started state of stream
             * as we dont want to START again as while doing Handoff
             * the stack state will be started, so it is not needed
@@ -1248,10 +1252,11 @@ static UINT16 btif_media_task_get_sbc_rate(void)
     UINT16 rate = BTIF_A2DP_DEFAULT_BITRATE;
 
     /* restrict bitrate if a2dp link is non-edr */
-    if (!btif_av_is_peer_edr())
+    if ((!btif_av_is_peer_edr()) ||
+        (btif_media_cb.is_medium_bitrate_enabled))
     {
         rate = BTIF_A2DP_NON_EDR_MAX_RATE;
-        APPL_TRACE_DEBUG("non-edr a2dp sink detected, restrict rate to %d", rate);
+        APPL_TRACE_IMP("Restrict A2dp bitrate to %d", rate);
     }
 
     return rate;
@@ -1549,6 +1554,11 @@ void btif_a2dp_stop_media_task(void)
     alarm_free(btif_media_cb.media_alarm);
     btif_media_cb.media_alarm = NULL;
 
+    if (btif_media_cb.remote_start_alarm != NULL)
+    {
+        alarm_free(btif_media_cb.remote_start_alarm);
+        btif_media_cb.remote_start_alarm = NULL;
+    }
     // Exit thread
     fixed_queue_free(btif_media_cmd_msg_queue, NULL);
     thread_post(worker_thread, btif_media_thread_cleanup, NULL);
@@ -1575,6 +1585,7 @@ void btif_a2dp_on_init(void)
     btif_media_cb.rx_audio_focus_state = BTIF_MEDIA_FOCUS_NOT_GRANTED;
     btif_media_cb.audio_track = NULL;
 #endif
+    btif_media_cb.is_medium_bitrate_enabled = FALSE;
 }
 
 
@@ -1688,6 +1699,7 @@ void btif_a2dp_on_idle(void)
         APPL_TRACE_DEBUG("Stopped BT track");
     }
 #endif
+    btif_media_cb.is_medium_bitrate_enabled = FALSE;
 }
 
 /*****************************************************************************
@@ -1770,6 +1782,7 @@ BOOLEAN btif_a2dp_on_started(tBTA_AV_START *p_av, BOOLEAN pending_start, tBTA_AV
     BOOLEAN ack = FALSE;
 
     APPL_TRACE_IMP("## ON A2DP STARTED ##");
+    btif_media_cb.is_medium_bitrate_enabled = FALSE;
 
     if (p_av == NULL)
     {
@@ -1836,7 +1849,6 @@ BOOLEAN btif_a2dp_on_started(tBTA_AV_START *p_av, BOOLEAN pending_start, tBTA_AV
     }
     return ack;
 }
-
 
 /*****************************************************************************
 **
@@ -1949,7 +1961,62 @@ void btif_a2dp_on_suspended(tBTA_AV_SUSPEND *p_av)
     btif_media_task_stop_aa_req();
 }
 
+/*****************************************************************************
+**
+** Function        btif_media_remote_start_alarm_cb
+**
+** Description     Remote start honor timer, if media is not started then
+**                 suspend AV
+** Returns
+**
+*******************************************************************************/
+static void btif_media_remote_start_alarm_cb(UNUSED_ATTR void *context) {
+  thread_post(worker_thread, btif_a2dp_remote_start_timer, NULL);
+}
 
+/*****************************************************************************
+**
+** Function        btif_a2dp_remote_start_timer
+**
+** Description     Suspend stream if media is not started for remote stream
+**                 start is honored
+** Returns
+**
+*******************************************************************************/
+void btif_a2dp_remote_start_timer()
+{
+    alarm_free(btif_media_cb.remote_start_alarm);
+    btif_media_cb.remote_start_alarm = NULL;
+    APPL_TRACE_DEBUG("Suspend stream request to Av");
+    btif_dispatch_sm_event(BTIF_AV_SUSPEND_STREAM_REQ_EVT, NULL, 0);
+}
+
+/*****************************************************************************
+**
+** Function        btif_a2dp_on_remote_started
+**
+** Description
+**
+** Returns
+**
+*******************************************************************************/
+void btif_a2dp_on_remote_started()
+{
+    btif_media_cb.remote_start_alarm = alarm_new("btif.remote_start_task");
+
+    if (!btif_media_cb.remote_start_alarm)
+    {
+        APPL_TRACE_WARNING("%s:unable to allocate media alarm",__func__);
+        return;
+    }
+    alarm_set(btif_media_cb.remote_start_alarm, BTIF_REMOTE_START_TOUT,
+              btif_media_remote_start_alarm_cb, NULL);
+}
+
+BOOLEAN btif_is_remote_start_timer_scheduled()
+{
+    return (alarm_is_scheduled(btif_media_cb.remote_start_alarm))? TRUE:FALSE;
+}
 /*****************************************************************************
 **
 ** Function        btif_a2dp_on_offload_started
@@ -3671,7 +3738,8 @@ static void btif_media_task_aa_stop_tx(void)
     {
         APPL_TRACE_IMP("%s media_alarm is %srunning", __func__,
                          alarm_is_scheduled(btif_media_cb.media_alarm)? "" : "not ");
-        const bool send_ack = alarm_is_scheduled(btif_media_cb.media_alarm);
+        const bool send_ack = alarm_is_scheduled(btif_media_cb.media_alarm) |
+                                             btif_is_remote_start_timer_scheduled();
 
         if (isA2dAptXEnabled && A2d_aptx_thread)
         {
@@ -3682,6 +3750,11 @@ static void btif_media_task_aa_stop_tx(void)
            /* Stop the timer first */
            alarm_free(btif_media_cb.media_alarm);
            btif_media_cb.media_alarm = NULL;
+        }
+        if (btif_media_cb.remote_start_alarm != NULL)
+        {
+            alarm_free(btif_media_cb.remote_start_alarm);
+            btif_media_cb.remote_start_alarm = NULL;
         }
 
         UIPC_Close(UIPC_CH_ID_AV_AUDIO);
@@ -3711,6 +3784,11 @@ static void btif_media_task_aa_stop_tx(void)
     {
         APPL_TRACE_IMP("%s tx_started: %d, tx_stop_initiated: %d",
             __func__, btif_media_cb.tx_started, btif_media_cb.tx_stop_initiated);
+        if (btif_media_cb.remote_start_alarm != NULL)
+        {
+            alarm_free(btif_media_cb.remote_start_alarm);
+            btif_media_cb.remote_start_alarm = NULL;
+        }
         if (btif_media_cb.tx_started && !btif_media_cb.tx_stop_initiated)
             btif_media_send_vendor_stop();
         else
@@ -5220,4 +5298,78 @@ void btif_update_a2dp_metrics(void)
         }
     }
     metrics_log_a2dp_session(&metrics);
+}
+
+void btif_media_on_update_bitrate(bool isMediumBitrateEnabled)
+{
+    if (alarm_is_scheduled(btif_media_cb.media_alarm))
+    {
+        APPL_TRACE_IMP("bitrate Changed to medium ?: %d", isMediumBitrateEnabled);
+        APPL_TRACE_IMP("Existing bitrate type used ?: %d",
+                    btif_media_cb.is_medium_bitrate_enabled);
+        if (btif_media_cb.is_medium_bitrate_enabled != isMediumBitrateEnabled)
+        {
+            btif_media_cb.is_medium_bitrate_enabled = isMediumBitrateEnabled;
+            btif_a2dp_encoder_update();
+        }
+    }
+}
+
+void btif_media_dump_codec_info(tBTA_AV_HNDL hdl)
+{
+   UINT8 codectype;
+   tBTIF_MEDIA_INIT_AUDIO msg;
+   tA2D_APTX_CIE* codecInfo = 0;
+   codectype = bta_av_select_codec(hdl);
+   if (A2D_NON_A2DP_MEDIA_CT == codectype) {
+       UINT8* ptr = bta_av_co_get_current_codecInfo();
+       if (ptr) {
+           codecInfo = (tA2D_APTX_CIE*) &ptr[BTA_AV_CFG_START_IDX];
+           APPL_TRACE_DEBUG("%s codecId = %d", __func__, codecInfo->codecId);
+           APPL_TRACE_DEBUG("%s vendorId = %x", __func__, codecInfo->vendorId);
+           if (codecInfo && codecInfo->vendorId == A2D_APTX_VENDOR_ID
+               && codecInfo->codecId == A2D_APTX_CODEC_ID_BLUETOOTH)
+           {
+               APPL_TRACE_DEBUG("%s: selected codec is aptX", __FUNCTION__);
+               APPL_TRACE_DEBUG("%s: SamplingFreq: %d",__FUNCTION__, msg.SamplingFreq);
+               APPL_TRACE_DEBUG("%s: ChannelMode: %d",__FUNCTION__, msg.ChannelMode);
+               APPL_TRACE_DEBUG("%s: MtuSize: %d",__FUNCTION__, msg.MtuSize);
+               APPL_TRACE_DEBUG("%s: CodecType: %d",__FUNCTION__, msg.CodecType);
+               APPL_TRACE_DEBUG("%s: BluetoothVendorID: %d",__FUNCTION__, msg.BluetoothVendorID);
+               APPL_TRACE_DEBUG("%s: BluetoothCodecID: %d",__FUNCTION__, msg.BluetoothCodecID);
+           }
+           if (codecInfo && codecInfo->vendorId == A2D_APTX_HD_VENDOR_ID
+               && codecInfo->codecId == A2D_APTX_HD_CODEC_ID_BLUETOOTH)
+           {
+               APPL_TRACE_DEBUG("%s: selected codec is aptXHD", __FUNCTION__);
+               APPL_TRACE_DEBUG("%s: SamplingFreq: %d",__FUNCTION__, msg.SamplingFreq);
+               APPL_TRACE_DEBUG("%s: ChannelMode: %d",__FUNCTION__, msg.ChannelMode);
+               APPL_TRACE_DEBUG("%s: MtuSize: %d",__FUNCTION__, msg.MtuSize);
+               APPL_TRACE_DEBUG("%s: CodecType: %d",__FUNCTION__, msg.CodecType);
+               APPL_TRACE_DEBUG("%s: BluetoothVendorID: %d",__FUNCTION__, msg.BluetoothVendorID);
+               APPL_TRACE_DEBUG("%s: BluetoothCodecID: %d",__FUNCTION__, msg.BluetoothCodecID);
+
+           }
+       }
+   }
+   if (BTIF_AV_CODEC_M24 == codectype) {
+       APPL_TRACE_DEBUG("%s: selected codec is AAC", __FUNCTION__);
+       APPL_TRACE_DEBUG("%s: SamplingFreq: %d",__FUNCTION__, msg.SamplingFreq);
+       APPL_TRACE_DEBUG("%s: ChannelMode: %d",__FUNCTION__, msg.ChannelMode);
+       APPL_TRACE_DEBUG("%s: MtuSize: %d",__FUNCTION__, msg.MtuSize);
+       APPL_TRACE_DEBUG("%s: CodecType: %d",__FUNCTION__, msg.CodecType);
+       APPL_TRACE_DEBUG("%s: ObjectType: %d",__FUNCTION__, msg.ObjectType);
+       APPL_TRACE_DEBUG("%s: bit_rate: %d",__FUNCTION__, msg.bit_rate);
+   }
+   if (BTIF_AV_CODEC_SBC == codectype)
+   {
+       APPL_TRACE_DEBUG("%s: selected codec is SBC", __FUNCTION__);
+       APPL_TRACE_DEBUG("%s: SamplingFreq: %d",__FUNCTION__, msg.SamplingFreq);
+       APPL_TRACE_DEBUG("%s: ChannelMode: %d",__FUNCTION__, msg.ChannelMode);
+       APPL_TRACE_DEBUG("%s: NumOfSubBands: %d",__FUNCTION__, msg.NumOfSubBands);
+       APPL_TRACE_DEBUG("%s: NumOfBlocks: %d",__FUNCTION__, msg.NumOfBlocks);
+       APPL_TRACE_DEBUG("%s: AllocationMethod: %d",__FUNCTION__, msg.AllocationMethod);
+       APPL_TRACE_DEBUG("%s: MtuSize: %d",__FUNCTION__, msg.MtuSize);
+       APPL_TRACE_DEBUG("%s: CodecType: %d",__FUNCTION__, msg.CodecType);
+   }
 }

@@ -985,6 +985,8 @@ extern void         btm_read_link_quality_complete(UINT8 *p);
 
 extern tBTM_STATUS  btm_set_packet_types (tACL_CONN *p, UINT16 pkt_types);
 extern void         btm_process_clk_off_comp_evt (UINT16 hci_handle, UINT16 clock_offset);
+extern void         btm_process_pkt_type_change_evt (UINT16 hci_handle, UINT16 pkt_type);
+extern void         btm_process_soc_logging_evt (UINT16 soc_log_id);
 extern void         btm_acl_role_changed (UINT8 hci_status, BD_ADDR bd_addr, UINT8 new_role);
 extern void         btm_blacklist_role_change_device (BD_ADDR bd_addr, UINT8 hci_status);
 extern void         btm_acl_encrypt_change (UINT16 handle, UINT8 status, UINT8 encr_enable);
