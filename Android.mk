@@ -40,7 +40,6 @@ bluetooth_CFLAGS += \
   -fvisibility=hidden \
   -Wall \
   -Wextra \
-  -Werror \
   -Wno-gnu-variable-sized-type-not-at-end \
   -Wno-typedef-redefinition \
   -Wno-unused-parameter \
