@@ -137,9 +137,6 @@ static const interop_addr_entry_t interop_addr_database[] = {
 
     // Jeep Uconnect
     {{{0x00, 0x54, 0xaf, 0, 0, 0}}, 3, INTEROP_DISABLE_ROLE_SWITCH},
-
-    // AirPods 2 - unacceptably loud volume
-    {{{0x94, 0x16, 0x25, 0, 0, 0}}, 3, INTEROP_DISABLE_ABSOLUTE_VOLUME},
 };
 
 typedef struct {
